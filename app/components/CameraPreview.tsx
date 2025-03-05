@@ -4,6 +4,9 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { Card, CardContent } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
+import { MyComponent } from "../../components/ui/mycomponent";
+import MarkdownRenderer from '../../components/ui//markdown';
+import RoundedTextInput from '../../components/ui/roundedTextInput';
 import { Video, VideoOff } from "lucide-react";
 import { GeminiWebSocket } from '../services/geminiWebSocket';
 import { Base64 } from 'js-base64';
@@ -23,12 +26,15 @@ export default function CameraPreview({ onTranscription }: CameraPreviewProps) {
   const videoCanvasRef = useRef<HTMLCanvasElement>(null);
   const audioWorkletNodeRef = useRef<AudioWorkletNode | null>(null);
   const [isAudioSetup, setIsAudioSetup] = useState(false);
+  const [chatResponse, setChatResponse] = useState<string>(''); // Changed to string
   const setupInProgressRef = useRef(false);
   const [isWebSocketReady, setIsWebSocketReady] = useState(false);
   const imageIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const [isModelSpeaking, setIsModelSpeaking] = useState(false);
   const [outputAudioLevel, setOutputAudioLevel] = useState(0);
   const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
+  const jsonMessageQueue = useRef<string[]>([]); // Use useRef for the queue
+  const isProcessingJsonMessage = useRef(false); // Use useRef for the boolean
 
   const cleanupAudio = useCallback(() => {
     if (audioWorkletNodeRef.current) {
@@ -66,7 +72,7 @@ export default function CameraPreview({ onTranscription }: CameraPreviewProps) {
       setStream(null);
     } else {
       try {
-        const videoStream = await navigator.mediaDevices.getUserMedia({ 
+        const videoStream = await navigator.mediaDevices.getUserMedia({
           video: true,
           audio: false
         });
@@ -127,6 +133,9 @@ export default function CameraPreview({ onTranscription }: CameraPreviewProps) {
       (level) => {
         setOutputAudioLevel(level);
       },
+      (chatResponse) => {
+        processChatMessage(chatResponse)
+      },
       onTranscription
     );
     geminiWsRef.current.connect();
@@ -159,7 +168,7 @@ export default function CameraPreview({ onTranscription }: CameraPreviewProps) {
 
   // Update audio processing setup
   useEffect(() => {
-    if (!isStreaming || !stream || !audioContextRef.current || 
+    if (!isStreaming || !stream || !audioContextRef.current ||
         !isWebSocketReady || isAudioSetup || setupInProgressRef.current) return;
 
     let isActive = true;
@@ -262,55 +271,106 @@ export default function CameraPreview({ onTranscription }: CameraPreviewProps) {
     geminiWsRef.current.sendMediaChunk(b64Data, "image/jpeg");
   };
 
-  return (
-    <div className="space-y-4">
-      <div className="relative">
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          className="w-[640px] h-[480px] bg-muted rounded-lg overflow-hidden"
-        />
-        
-        {/* Connection Status Overlay */}
-        {isStreaming && connectionStatus !== 'connected' && (
-          <div className="absolute inset-0 bg-black/50 flex items-center justify-center rounded-lg backdrop-blur-sm">
-            <div className="text-center space-y-2">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white mx-auto" />
-              <p className="text-white font-medium">
-                {connectionStatus === 'connecting' ? 'Connecting to Gemini...' : 'Disconnected'}
-              </p>
-              <p className="text-white/70 text-sm">
-                Please wait while we establish a secure connection
-              </p>
-            </div>
-          </div>
-        )}
+    const handleTextSubmit = (text: string) => {
+        console.log('Text submitted from child:', text);
+        if (!geminiWsRef.current) return;
+        geminiWsRef.current.sendChatMessage(text);
+    };
 
-        <Button
-          onClick={toggleCamera}
-          size="icon"
-          className={`absolute left-1/2 bottom-4 -translate-x-1/2 rounded-full w-12 h-12 backdrop-blur-sm transition-colors
-            ${isStreaming 
-              ? 'bg-red-500/50 hover:bg-red-500/70 text-white' 
-              : 'bg-green-500/50 hover:bg-green-500/70 text-white'
-            }`}
-        >
-          {isStreaming ? <VideoOff className="h-6 w-6" /> : <Video className="h-6 w-6" />}
-        </Button>
-      </div>
-      {isStreaming && (
-        <div className="w-[640px] h-2 rounded-full bg-green-100">
-          <div
-            className="h-full rounded-full transition-all bg-green-500"
-            style={{ 
-              width: `${isModelSpeaking ? outputAudioLevel : audioLevel}%`,
-              transition: 'width 100ms ease-out'
-            }}
+    const processChatMessage = (chatResponse: string) => {
+        console.log("Got chat response: " + chatResponse)
+        enqueueJsonMessage(chatResponse);
+    }
+
+    const enqueueJsonMessage = (message: string) => {
+        jsonMessageQueue.current.push(message);
+        processJsonMessageQueue();
+    }
+
+    const processJsonMessageQueue = async () => {
+        if (isProcessingJsonMessage.current || jsonMessageQueue.current.length === 0) {
+          return;
+        }
+
+        isProcessingJsonMessage.current = true;
+        const message = jsonMessageQueue.current.shift()!;
+
+        try {
+            // Update state immutably
+            setChatResponse((prevResponse) => prevResponse + '\n' + message);
+
+        } catch (error) {
+          console.error("[WebSocket] Error handling JSON message:", error);
+        } finally {
+          isProcessingJsonMessage.current = false;
+          // Process the next message in the queue
+          processJsonMessageQueue();
+        }
+    }
+
+
+  return (
+    <div className="flex items-start space-x-4">
+      {/* Column 1: Video and Controls */}
+      <div className="flex flex-col items-center space-y-2">
+        <div className="relative">
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            className="w-[640px] h-[480px] bg-muted rounded-lg overflow-hidden"
           />
+
+          {/* Connection Status Overlay */}
+          {isStreaming && connectionStatus !== 'connected' ? (
+            <div className="absolute inset-0 bg-black/50 flex items-center justify-center rounded-lg backdrop-blur-sm">
+              <div className="text-center space-y-2">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white mx-auto" />
+                <p className="text-white font-medium">
+                  {connectionStatus === 'connecting' ? 'Connecting to Gemini...' : 'Disconnected'}
+                </p>
+                <p className="text-white/70 text-sm">
+                  Please wait while we establish a secure connection
+                </p>
+              </div>
+            </div>
+          ) : null}
+
+          <Button
+            onClick={toggleCamera}
+            size="icon"
+            className={`absolute left-1/2 bottom-4 -translate-x-1/2 rounded-full w-12 h-12 backdrop-blur-sm transition-colors
+              ${isStreaming
+                ? 'bg-red-500/50 hover:bg-red-500/70 text-white'
+                : 'bg-green-500/50 hover:bg-green-500/70 text-white'
+              }`}
+          >
+            {isStreaming ? <VideoOff className="h-6 w-6" /> : <Video className="h-6 w-6" />}
+          </Button>
         </div>
-      )}
-      <canvas ref={videoCanvasRef} className="hidden" />
+        {isStreaming ? (
+          <div className="w-[640px] h-2 rounded-full bg-green-100">
+            <div
+              className="h-full rounded-full transition-all bg-green-500"
+               style={{
+                width: `${isModelSpeaking ? outputAudioLevel : audioLevel}%`,
+                transition: 'width 100ms ease-out'
+              }}
+            />
+          </div>
+        ) : null}
+      </div>
+
+      {/* Column 2: MyComponent and RoundedTextInput */}
+      <div className="flex flex-col flex-1">
+        <MyComponent markdown={chatResponse} />
+        <RoundedTextInput onTextSubmit={handleTextSubmit} />
+      </div>
+
+      {/* Column 3: Canvas */}
+      <div>
+        <canvas ref={videoCanvasRef} className="hidden" />
+      </div>
     </div>
   );
 }

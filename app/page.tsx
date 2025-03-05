@@ -2,6 +2,7 @@
 "use client";
 import { useState, useCallback } from 'react';
 import CameraPreview from './components/CameraPreview';
+import Diary from './components/Diary';
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 
@@ -55,7 +56,7 @@ export default function Home() {
       <div className="flex gap-8 p-8">
         <CameraPreview onTranscription={handleTranscription} />
 
-        <div className="w-[640px] bg-white">
+        <div className="w-[440px] bg-white">
           <ScrollArea className="h-[540px] p-6">
             <div className="space-y-6">
               <GeminiMessage text="Hi! I'm Gemini. I can see and hear you. Let's chat!" />
